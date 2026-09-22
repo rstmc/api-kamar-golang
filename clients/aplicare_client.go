@@ -207,7 +207,7 @@ func NewAplicareClient() *AplicareClient {
 //	}
 func (c *AplicareClient) UpdateBed(room models.RoomAvailability) (*AplicareResponse, error) {
 
-	const maxAttempts = 3
+	const maxAttempts = 5
 
 	var lastErr error
 
@@ -261,9 +261,11 @@ func (c *AplicareClient) UpdateBed(room models.RoomAvailability) (*AplicareRespo
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
 		req.Header.Set("X-cons-id", c.ConsID)
 		req.Header.Set("X-timestamp", timestamp)
 		req.Header.Set("X-signature", signature)
+		req.Header.Set("User-Agent", "curl/8.0")
 
 		// Jangan gunakan persistent connection.
 		req.Header.Set("Connection", "close")
@@ -394,63 +396,198 @@ func (c *AplicareClient) generateSignature(timestamp string) string {
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil))
 }
 
+// func (c *AplicareClient) ReadBeds(start, limit int) (*AplicareBedReadResponse, error) {
+// 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+
+// 	signature := c.generateSignature(timestamp)
+
+// 	url := fmt.Sprintf(
+// 		"%s/aplicaresws/rest/bed/read/%s/%d/%d",
+// 		c.BaseURL,
+// 		c.NPPK,
+// 		start,
+// 		limit,
+// 	)
+
+// 	req, err := http.NewRequest(
+// 		http.MethodGet,
+// 		url,
+// 		nil,
+// 	)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to create Aplicare request: %w", err)
+// 	}
+
+// 	req.Header.Set("Content-Type", "application/json")
+// 	req.Header.Set("Accept", "application/json")
+// 	req.Header.Set("X-cons-id", c.ConsID)
+// 	req.Header.Set("X-timestamp", timestamp)
+// 	req.Header.Set("X-signature", signature)
+// 	req.Header.Set("User-Agent", "curl/8.0")
+
+// 	resp, err := c.HTTPClient.Do(req)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to call Aplicare: %w", err)
+// 	}
+// 	defer resp.Body.Close()
+
+// 	responseBody, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to read Aplicare response: %w", err)
+// 	}
+
+// 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+// 		return nil, fmt.Errorf(
+// 			"Aplicare returned HTTP %d: %s",
+// 			resp.StatusCode,
+// 			string(responseBody),
+// 		)
+// 	}
+
+// 	var result AplicareBedReadResponse
+
+// 	if err := json.Unmarshal(responseBody, &result); err != nil {
+// 		return nil, fmt.Errorf(
+// 			"failed to decode Aplicare response: %w; response=%s",
+// 			err,
+// 			string(responseBody),
+// 		)
+// 	}
+
+// 	return &result, nil
+// }
+
 func (c *AplicareClient) ReadBeds(start, limit int) (*AplicareBedReadResponse, error) {
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
-	signature := c.generateSignature(timestamp)
+	const maxAttempts = 3
 
-	url := fmt.Sprintf(
-		"%s/aplicaresws/rest/bed/read/%s/%d/%d",
-		c.BaseURL,
-		c.NPPK,
-		start,
-		limit,
-	)
+	var lastErr error
 
-	req, err := http.NewRequest(
-		http.MethodGet,
-		url,
-		nil,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Aplicare request: %w", err)
-	}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("X-cons-id", c.ConsID)
-	req.Header.Set("X-timestamp", timestamp)
-	req.Header.Set("X-signature", signature)
-	req.Header.Set("User-Agent", "curl/8.0")
+		// Timestamp dan signature BARU setiap percobaan
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := c.generateSignature(timestamp)
 
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to call Aplicare: %w", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read Aplicare response: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf(
-			"Aplicare returned HTTP %d: %s",
-			resp.StatusCode,
-			string(responseBody),
+		url := fmt.Sprintf(
+			"%s/aplicaresws/rest/bed/read/%s/%d/%d",
+			c.BaseURL,
+			c.NPPK,
+			start,
+			limit,
 		)
-	}
 
-	var result AplicareBedReadResponse
-
-	if err := json.Unmarshal(responseBody, &result); err != nil {
-		return nil, fmt.Errorf(
-			"failed to decode Aplicare response: %w; response=%s",
-			err,
-			string(responseBody),
+		req, err := http.NewRequest(
+			http.MethodGet,
+			url,
+			nil,
 		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to create Aplicare request: %w",
+				err,
+			)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("X-cons-id", c.ConsID)
+		req.Header.Set("X-timestamp", timestamp)
+		req.Header.Set("X-signature", signature)
+		req.Header.Set("User-Agent", "curl/8.0")
+
+		// Jangan reuse koneksi
+		req.Header.Set("Connection", "close")
+
+		fmt.Printf(
+			"Aplicare READ: attempt=%d/%d start=%d limit=%d timestamp=%s\n",
+			attempt,
+			maxAttempts,
+			start,
+			limit,
+			timestamp,
+		)
+
+		resp, err := c.HTTPClient.Do(req)
+
+		if err != nil {
+
+			lastErr = err
+
+			fmt.Printf(
+				"Aplicare READ failed: attempt=%d/%d error=%v\n",
+				attempt,
+				maxAttempts,
+				err,
+			)
+
+			if attempt < maxAttempts {
+
+				delay := time.Duration(attempt) * time.Second
+
+				fmt.Printf(
+					"Retry READ dalam %v...\n",
+					delay,
+				)
+
+				time.Sleep(delay)
+
+				continue
+			}
+
+			break
+		}
+
+		responseBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if err != nil {
+
+			lastErr = err
+
+			if attempt < maxAttempts {
+
+				delay := time.Duration(attempt) * time.Second
+				time.Sleep(delay)
+
+				continue
+			}
+
+			break
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+
+			return nil, fmt.Errorf(
+				"Aplicare returned HTTP %d: %s",
+				resp.StatusCode,
+				string(responseBody),
+			)
+		}
+
+		var result AplicareBedReadResponse
+
+		if err := json.Unmarshal(responseBody, &result); err != nil {
+			return nil, fmt.Errorf(
+				"failed to decode Aplicare response: %w; response=%s",
+				err,
+				string(responseBody),
+			)
+		}
+
+		fmt.Printf(
+			"Aplicare READ success: code=%d message=%s jumlah_bed=%d\n",
+			result.MetaData.Code,
+			result.MetaData.Message,
+			len(result.Response.List),
+		)
+
+		return &result, nil
 	}
 
-	return &result, nil
+	return nil, fmt.Errorf(
+		"failed to call Aplicare READ after %d attempts: %w",
+		maxAttempts,
+		lastErr,
+	)
 }
